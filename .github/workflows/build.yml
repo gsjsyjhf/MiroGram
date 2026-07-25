@@ -1,23 +1,24 @@
 name: Build MiroGram APK + GoFile Upload
 
 on:
-  push:
-    branches: [ main, Mercurygram ]
   workflow_dispatch:
+  push:
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     permissions:
       contents: read
       actions: write
 
     steps:
-      - name: Checkout code
+      - name: Checkout code (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -25,64 +26,53 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
+      - name: Setup Android SDK + NDK
         uses: android-actions/setup-android@v3
+        with:
+          ndk-version: '27.2.12479018'
 
-      - name: Grant execute permission for gradlew
+      - name: Grant execute permission
         run: chmod +x gradlew
 
-      - name: Build Debug APK (Fat)
+      - name: Build Debug APK (this may take 60-120 minutes)
         run: ./gradlew assembleAfatDebug --no-daemon
         env:
           JAVA_HOME: ${{ steps.setup-java.outputs.jdk }}
-        timeout-minutes: 120
+        timeout-minutes: 150
 
-      - name: Find APK
-        id: apk
+      - name: Find built APK
+        id: find-apk
         run: |
-          APK_PATH=$(find TMessagesProj_App/build/outputs/apk -name "*.apk" | head -1)
+          APK_PATH=$(find . -name "*-debug.apk" -o -name "*afatDebug*.apk" | head -1)
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find TMessagesProj_App/build/outputs -name "*.apk" | head -1)
+          fi
           echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
-          echo "APK found at: $APK_PATH"
+          ls -lh "$APK_PATH" || echo "APK not found"
 
-      - name: Upload to GoFile
-        id: gofile
+      - name: Upload APK to GoFile
+        if: steps.find-apk.outputs.apk_path != ''
+        id: upload-gofile
         run: |
-          APK_FILE="${{ steps.apk.outputs.apk_path }}"
-          echo "Uploading $APK_FILE to GoFile..."
+          APK="${{ steps.find-apk.outputs.apk_path }}"
+          echo "Uploading $APK to GoFile..."
+          RESPONSE=$(curl -s -F "file=@$APK" https://store1.gofile.io/contents/uploadfile)
+          echo "$RESPONSE"
           
-          RESPONSE=$(curl -s -F "file=@$APK_FILE" https://store1.gofile.io/contents/uploadfile)
-          
-          DOWNLOAD_PAGE=$(echo $RESPONSE | grep -o '"downloadPage":"[^"]*"' | cut -d'"' -f4)
-          DOWNLOAD_LINK=$(echo $RESPONSE | grep -o '"downloadLink":"[^"]*"' | cut -d'"' -f4 || echo $DOWNLOAD_PAGE)
-          
-          echo "download_link=$DOWNLOAD_LINK" >> $GITHUB_OUTPUT
+          DOWNLOAD_PAGE=$(echo "$RESPONSE" | grep -o '"downloadPage":"[^"]*"' | cut -d'"' -f4 || echo "")
           echo "download_page=$DOWNLOAD_PAGE" >> $GITHUB_OUTPUT
-          
-          echo "✅ APK uploaded successfully!"
-          echo "📥 Download Link: $DOWNLOAD_LINK"
-          echo "🔗 Page: $DOWNLOAD_PAGE"
 
-      - name: Upload APK as Artifact
+      - name: Upload APK as GitHub Artifact
         uses: actions/upload-artifact@v4
         with:
           name: MiroGram-APK
-          path: ${{ steps.apk.outputs.apk_path }}
+          path: ${{ steps.find-apk.outputs.apk_path }}
+          retention-days: 7
 
-      - name: Create Release Summary
+      - name: Summary
         run: |
-          echo "## 🚀 MiroGram APK Ready!" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ MiroGram Build Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📥 Direct Download Link (GoFile)" >> $GITHUB_STEP_SUMMARY
+          echo "**Download Link (GoFile):** ${{ steps.upload-gofile.outputs.download_page }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**${{ steps.gofile.outputs.download_link }}**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "🔗 [Open Download Page](${{ steps.gofile.outputs.download_page }})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "App: **MiroGram**" >> $GITHUB_STEP_SUMMARY
-          echo "Package: `com.mirogram.android`" >> $GITHUB_STEP_SUMMARY
-          echo "Version: `12.9.0`" >> $GITHUB_STEP_SUMMARY
-          echo "Build: Debug (Fat APK)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Glassmorphism theme applied" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Package renamed" >> $GITHUB_STEP_SUMMARY
+          echo "Package: com.mirogram.android" >> $GITHUB_STEP_SUMMARY

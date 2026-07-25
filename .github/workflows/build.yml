@@ -1,0 +1,88 @@
+name: Build MiroGram APK + GoFile Upload
+
+on:
+  push:
+    branches: [ main, Mercurygram ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Debug APK (Fat)
+        run: ./gradlew assembleAfatDebug --no-daemon
+        env:
+          JAVA_HOME: ${{ steps.setup-java.outputs.jdk }}
+        timeout-minutes: 120
+
+      - name: Find APK
+        id: apk
+        run: |
+          APK_PATH=$(find TMessagesProj_App/build/outputs/apk -name "*.apk" | head -1)
+          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+          echo "APK found at: $APK_PATH"
+
+      - name: Upload to GoFile
+        id: gofile
+        run: |
+          APK_FILE="${{ steps.apk.outputs.apk_path }}"
+          echo "Uploading $APK_FILE to GoFile..."
+          
+          RESPONSE=$(curl -s -F "file=@$APK_FILE" https://store1.gofile.io/contents/uploadfile)
+          
+          DOWNLOAD_PAGE=$(echo $RESPONSE | grep -o '"downloadPage":"[^"]*"' | cut -d'"' -f4)
+          DOWNLOAD_LINK=$(echo $RESPONSE | grep -o '"downloadLink":"[^"]*"' | cut -d'"' -f4 || echo $DOWNLOAD_PAGE)
+          
+          echo "download_link=$DOWNLOAD_LINK" >> $GITHUB_OUTPUT
+          echo "download_page=$DOWNLOAD_PAGE" >> $GITHUB_OUTPUT
+          
+          echo "✅ APK uploaded successfully!"
+          echo "📥 Download Link: $DOWNLOAD_LINK"
+          echo "🔗 Page: $DOWNLOAD_PAGE"
+
+      - name: Upload APK as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiroGram-APK
+          path: ${{ steps.apk.outputs.apk_path }}
+
+      - name: Create Release Summary
+        run: |
+          echo "## 🚀 MiroGram APK Ready!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📥 Direct Download Link (GoFile)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**${{ steps.gofile.outputs.download_link }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 [Open Download Page](${{ steps.gofile.outputs.download_page }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "App: **MiroGram**" >> $GITHUB_STEP_SUMMARY
+          echo "Package: `com.mirogram.android`" >> $GITHUB_STEP_SUMMARY
+          echo "Version: `12.9.0`" >> $GITHUB_STEP_SUMMARY
+          echo "Build: Debug (Fat APK)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Glassmorphism theme applied" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Package renamed" >> $GITHUB_STEP_SUMMARY
